@@ -121,7 +121,7 @@ def save_results_by_type(
     for pid, person_output in enumerate(outputs):
         keypoints_data.append({
             'pid': pid,
-            'keypoints': person_output["pred_keypoints_3d"].tolist(),
+            'keypoints': (person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]).tolist(),
         })
     with open(keypoints_path, 'w') as f:
         json.dump(keypoints_data, f, indent=2)
