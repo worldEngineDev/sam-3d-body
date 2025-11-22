@@ -37,6 +37,9 @@ from notebook.utils import (
     save_mesh_results,
 )
 
+from we_cfg.fdc.config import RectificationConfig, StereoDataConfig
+from we_cfg.fdc.rectify_video import VideoRectifier, load_rectifier_from_cfg
+
 
 def find_images_in_directory(directory_path: str, recursive: bool = True) -> List[str]:
     """
@@ -96,7 +99,7 @@ def save_results_by_type(
         'overlays': os.path.join(output_dir, 'overlays'),
         'bboxes': os.path.join(output_dir, 'bboxes'),
         'skeletons': os.path.join(output_dir, 'skeletons'),
-        'focal_lengths': os.path.join(output_dir, 'focal_lengths'),
+        'keypoints': os.path.join(output_dir, 'keypoints'),
     }
     
     for dir_path in dirs.values():
@@ -107,16 +110,22 @@ def save_results_by_type(
         'overlays': 0,
         'bboxes': 0,
         'skeletons': 0,
-        'focal_lengths': 0,
+        'keypoints': 0,
     }
     
-    # Save focal length (once per image, from first person)
-    if outputs:
-        focal_length_data = {"focal_length": float(outputs[0]["focal_length"])}
-        focal_length_path = os.path.join(dirs['focal_lengths'], f"{image_name}_focal_length.json")
-        with open(focal_length_path, "w") as f:
-            json.dump(focal_length_data, f, indent=2)
-        saved_counts['focal_lengths'] = 1
+   
+    # Save keypoints
+    keypoints_filename = f"{image_name}_keypoints.json"
+    keypoints_path = os.path.join(dirs['keypoints'], keypoints_filename)
+    keypoints_data = []
+    for pid, person_output in enumerate(outputs):
+        keypoints_data.append({
+            'pid': pid,
+            'keypoints': person_output["pred_keypoints_3d"].tolist(),
+        })
+    with open(keypoints_path, 'w') as f:
+        json.dump(keypoints_data, f, indent=2)
+    saved_counts['keypoints'] += 1
     
     # Visualize 2D results with skeleton
     skeleton_images = visualize_2d_results(img_cv2, outputs, visualizer)
@@ -293,7 +302,7 @@ def load_image_list(image_list_path: str) -> List[str]:
 
 
 def process_images(
-    image_paths: List[str],
+    video_loader: VideoRectifier,
     output_dir: str,
     hf_repo_id: str = "facebook/sam-3d-body-dinov3",
     detector_name: str = "vitdet",
@@ -310,7 +319,7 @@ def process_images(
     Process a list of images with SAM 3D Body and save results.
     
     Args:
-        image_paths: List of paths to input images
+        video_loader: VideoRectifier instance
         output_dir: Directory to save output files
         hf_repo_id: HuggingFace repository ID for the model
         detector_name: Name of detector to use
@@ -345,50 +354,39 @@ def process_images(
     successful = 0
     failed = 0
     
-    for image_path in tqdm(image_paths, desc="Processing images"):
+    for frame_idx in tqdm(video_loader.get_frame_list(), desc="Processing frames"):
         try:
-            # Check if image exists
-            if not os.path.exists(image_path):
-                print(f"\nWarning: Image not found: {image_path}")
-                failed += 1
-                continue
-            
-            # Load image to verify it's valid
-            img_cv2 = cv2.imread(image_path)
-            if img_cv2 is None:
-                print(f"\nWarning: Could not load image: {image_path}")
-                failed += 1
-                continue
+            # Load frame
+            left_frame, right_frame = video_loader.read_and_rectify(frame_idx)
+
+            camera_params = video_loader.get_camera_params()
             
             # Process the image with SAM 3D Body
-            outputs = estimator.process_one_image(image_path)
-            
-            if not outputs:
-                print(f"\nWarning: No people detected in {image_path}")
-                failed += 1
-                continue
-            
-            # Get image name without extension
-            image_name = os.path.splitext(os.path.basename(image_path))[0]
+            use_load_int = True
+            if use_load_int:
+                cam_int_tensor = torch.from_numpy(np.array(camera_params["K_new"])).to(device)[None, :, :]
+            else:
+                cam_int_tensor = None
+            outputs = estimator.process_one_image(img=left_frame, cam_int=cam_int_tensor)
             
             # Save all results organized by type
             saved_counts = save_results_by_type(
-                img_cv2, outputs, estimator.faces, visualizer, output_dir, image_name
+                left_frame, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}"
             )
             
-            print(f"\n✓ Processed {image_path}")
-            print(f"  Number of people detected: {len(outputs)}")
-            print(f"  Saved files:")
-            print(f"    - Meshes: {saved_counts['meshes']}")
-            print(f"    - Overlays: {saved_counts['overlays']}")
-            print(f"    - BBoxes: {saved_counts['bboxes']}")
-            print(f"    - Skeletons: {saved_counts['skeletons']}")
-            print(f"    - Focal lengths: {saved_counts['focal_lengths']}")
+            # print(f"\n✓ Processed {frame_idx}")
+            # print(f"  Number of people detected: {len(outputs)}")
+            # print(f"  Saved files:")
+            # print(f"    - Meshes: {saved_counts['meshes']}")
+            # print(f"    - Overlays: {saved_counts['overlays']}")
+            # print(f"    - BBoxes: {saved_counts['bboxes']}")
+            # print(f"    - Skeletons: {saved_counts['skeletons']}")
+            # print(f"    - Focal lengths: {saved_counts['focal_lengths']}")
             
             successful += 1
             
         except Exception as e:
-            print(f"\nError processing {image_path}: {str(e)}")
+            print(f"\nError processing {frame_idx}: {str(e)}")
             import traceback
             traceback.print_exc()
             failed += 1
@@ -404,7 +402,7 @@ def process_images(
     # Print summary
     print("\n" + "="*60)
     print("Processing Summary:")
-    print(f"  Total images: {len(image_paths)}")
+    print(f"  Total frames: {len(video_loader.get_frame_list())}")
     print(f"  Successful: {successful}")
     print(f"  Failed: {failed}")
     print(f"  Output directory: {output_dir}")
@@ -416,66 +414,20 @@ def process_images(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Process images with SAM 3D Body",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Process all .jpg and .png images in a directory (recursive)
-  python process_image_list.py --image_dir /path/to/images --output_dir ./output
-
-  # Process images from a list file
-  python process_image_list.py --image_list images.txt --output_dir ./output
-
-  # Process a single image
-  python process_image_list.py --images image1.jpg --output_dir ./output
-
-  # Process multiple images
-  python process_image_list.py --images img1.jpg img2.jpg img3.jpg --output_dir ./output
-
-  # Use different model
-  python process_image_list.py --image_dir /path/to/images --output_dir ./output \\
-      --hf_repo_id facebook/sam-3d-body-vith
-
-Image list file format (one path per line):
-  /path/to/image1.jpg
-  /path/to/image2.png
-  # This is a comment
-  /path/to/image3.jpg
-        """,
-    )
+    parser = argparse.ArgumentParser(description="Process images with SAM 3D Body")
     
-    # Input options
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--image_dir",
+    parser.add_argument(
+        "--data_config", "-c",
         type=str,
-        help="Directory containing images (.jpg and .png files will be found automatically)",
-    )
-    input_group.add_argument(
-        "--image_list",
-        type=str,
-        help="Path to text file containing list of image paths (one per line)",
-    )
-    input_group.add_argument(
-        "--images",
-        nargs="+",
-        help="One or more image paths to process",
+        default="configs/config_0000_down.yaml",
+        help="Path to data config file",
     )
     parser.add_argument(
-        "--no_recursive",
-        action="store_true",
-        help="If --image_dir is used, only search in the top-level directory (not subdirectories)",
-    )
-    
-    # Output options
-    parser.add_argument(
-        "--output_dir",
+        "--output_dir", "-o",
         type=str,
-        default="./output",
-        help="Directory to save output files (default: ./output)",
+        default="output",
+        help="Output directory",
     )
-    
     # Model options
     parser.add_argument(
         "--hf_repo_id",
@@ -540,33 +492,19 @@ Image list file format (one path per line):
     
     args = parser.parse_args()
     
-    # Get image paths
-    if args.image_dir:
-        try:
-            image_paths = find_images_in_directory(args.image_dir, recursive=not args.no_recursive)
-            if not image_paths:
-                print(f"Error: No .jpg or .png images found in directory: {args.image_dir}")
-                sys.exit(1)
-            print(f"Found {len(image_paths)} images in {args.image_dir}")
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-    elif args.image_list:
-        if not os.path.exists(args.image_list):
-            print(f"Error: Image list file not found: {args.image_list}")
-            sys.exit(1)
-        image_paths = load_image_list(args.image_list)
+    # Create data config & video loader
+    data_config = StereoDataConfig.from_yaml(yaml_path=args.data_config)
+    video_loader = load_rectifier_from_cfg(data_config.rectify_config)
+    if args.output_dir is not None:
+        output_dir = args.output_dir
     else:
-        image_paths = args.images
+        output_dir = data_config.data_cache_dir
     
-    if not image_paths:
-        print("Error: No images to process")
-        sys.exit(1)
-    
+    os.makedirs(output_dir, exist_ok=True)
     # Process images
     process_images(
-        image_paths=image_paths,
-        output_dir=args.output_dir,
+        video_loader=video_loader,
+        output_dir=output_dir,
         hf_repo_id=args.hf_repo_id,
         detector_name=args.detector_name,
         segmentor_name=args.segmentor_name,

@@ -1,0 +1,101 @@
+data:
+  chunk_id: '0001'
+  data_root: /home/haonan/Data
+  device_id: 2ed0
+  frame_range:
+  - 0
+  - 100
+  kalibr_yaml_path: /home/haonan/Data/2ed0/calibration/down_calibration.yaml
+  primary_view: down
+  process_views:
+  - down
+  rectify_rotation: 180
+  rectify_swap_left_right: true
+  session_id: session_20251113_011830_657656
+  setup: sbs
+depth:
+  force_recompute: true
+  generate_point_cloud: false
+  height: 576
+  hiera: 0
+  pretrained_path: /app/FDCPost/pretrained_models/model_best_bp2.pth
+  quat_model_path: /app/FDCPost/pretrained_models/foundation_stereo_11-33-40_576x1024_iters12_4090.plan
+  stereo_depth_cfg_path: /app/FDCPost/config/stereo_depth_cfg.yaml
+  width: 1024
+  z_far: 20
+human_pose:
+  algorithm: we_human_pose
+  camera_angle:
+  - 0.0
+  - 0.0
+  - 0.5
+  camera_offset:
+  - 0.15
+  - 0.0
+  - 0.0
+  camera_upside_down: false
+  depth_downsample_ratio: 1
+  elbow_length: 0.3
+  elbow_pos:
+  - - -0.2
+    - 0.4
+    - 0.7
+  - - 0.25
+    - 0.4
+    - 0.7
+  elbow_x_threshold: 0.2
+  elbow_y_threshold: 0.2
+  elbow_z_threshold: 0.2
+  hand_dist_filter: 1.2
+  iou_threshold: 0.3
+  register_method: umeyama
+  robot_head_offset:
+  - 0.0
+  - 0.0
+  - 0.45
+  scale_ratio: 0.8
+  wrist_angle_threshold: 3.141592653589793
+  wrist_x_threshold: 1.8849555921538759
+  wrist_y_threshold: 1.8849555921538759
+  wrist_z_threshold: 1.5707963267948966
+postprocessing:
+  calibration_directory: calibration
+  first_k_frames: 10
+  input_path: null
+  keypoints_npz: processed/0000/down/hpe_output/processing_outputs.npz
+  llm_check:
+    api_key: null
+    disable_sampling: false
+    enabled: false
+    fps: 30.0
+    output_dir: null
+    parallelism: 4
+  metadata_json: metadata.json
+  output_mcap: 0000.mcap
+  pii:
+    blur_strength: 55
+    detections_json: null
+    enabled: false
+    force: false
+    frame_interval: 30
+    max_frames: null
+    parallelism: 4
+    preview_blur_strength: 25
+    redact_text: true
+    rotate: false
+    save_images_dir: null
+    save_images_index_offset: null
+    video: null
+  segments:
+    api_key: null
+    enabled: false
+    force: false
+    max_seconds: 120
+    min_seconds: 12
+  segments_json: null
+  validate: true
+  video_input: null
+slam:
+  height: 432
+  slam_method: MACVO
+  width: 768
