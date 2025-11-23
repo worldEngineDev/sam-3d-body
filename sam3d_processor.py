@@ -311,6 +311,8 @@ def process_images(
     device: str = "cuda",
     detector_path: str = "",
     segmentor_path: str = "",
+    mhr_path: str = "",
+    ckpt_path: str = "",
     fov_path: str = "",
     create_videos: bool = True,
     video_fps: float = 30.0,
@@ -329,8 +331,6 @@ def process_images(
         detector_path: Path to detector model (optional)
         segmentor_path: Path to segmentor model (optional)
         fov_path: Path to FOV estimator model (optional)
-        mhr_path: Path to MHR model (optional)
-        ckpt_path: Path to SAM 3D Body model checkpoint (optional)
     """
     # Set up SAM 3D Body estimator
     print("Setting up SAM 3D Body estimator...")
@@ -488,6 +488,11 @@ def main():
         help="Skip video generation (default: videos are created)",
     )
     parser.add_argument(
+        "--local_output_dir",
+        action="store_true",
+        help="Use local storage for output directory (default: output directory is in the data root)",
+    )
+    parser.add_argument(
         "--video_fps",
         type=float,
         default=30.0,
@@ -496,21 +501,21 @@ def main():
     parser.add_argument(
         "--mhr_path",
         type=str,
-        default="",
+        default="pretrained_models/sam-3d-body-dinov3/assets/mhr_model.pt",
         help="Path to MHR model (optional)",
     )
     parser.add_argument(
         "--ckpt_path",
         type=str,
-        default="",
-        help="Path to SAM 3D Body model checkpoint (optional)",
+        default="pretrained_models/sam-3d-body-dinov3/model.ckpt",
+        help="Path to SAM 3D Body model checkpoint",
     )
     args = parser.parse_args()
     
     # Create data config & video loader
     data_config = StereoDataConfig.from_yaml(yaml_path=args.data_config)
     video_loader = load_rectifier_from_cfg(data_config.rectify_config)
-    if args.output_dir is not None:
+    if args.local_output_dir and args.output_dir is not None:
         output_dir = args.output_dir
     else:
         output_dir = data_config.data_cache_dir
@@ -530,6 +535,8 @@ def main():
         fov_path=args.fov_path,
         create_videos=not args.no_videos,
         video_fps=args.video_fps,
+        mhr_path=args.mhr_path,
+        ckpt_path=args.ckpt_path,
     )
 
 

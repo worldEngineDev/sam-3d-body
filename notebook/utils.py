@@ -53,11 +53,13 @@ def setup_sam_3d_body(
     # Auto-detect device if not specified
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    if ckpt_path:
+
+    if os.path.exists(ckpt_path) and os.path.exists(mhr_path):
         print(f"Loading SAM 3D Body model from Local Checkpoint: {ckpt_path} and MHR: {mhr_path}...")
         model, model_cfg = load_sam_3d_body(checkpoint_path=ckpt_path, device=device, mhr_path=mhr_path)
     else:
         # Load core model from HuggingFace
+        print(f"Loading SAM 3D Body model from HuggingFace: {hf_repo_id}...")
         model, model_cfg = load_sam_3d_body_hf(hf_repo_id, device=device)
 
     # Initialize optional components
