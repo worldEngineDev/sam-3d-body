@@ -329,6 +329,8 @@ def process_images(
         detector_path: Path to detector model (optional)
         segmentor_path: Path to segmentor model (optional)
         fov_path: Path to FOV estimator model (optional)
+        mhr_path: Path to MHR model (optional)
+        ckpt_path: Path to SAM 3D Body model checkpoint (optional)
     """
     # Set up SAM 3D Body estimator
     print("Setting up SAM 3D Body estimator...")
@@ -340,6 +342,8 @@ def process_images(
         detector_path=detector_path,
         segmentor_path=segmentor_path,
         fov_path=fov_path,
+        mhr_path=mhr_path,
+        ckpt_path=ckpt_path,
         device=device,
     )
     
@@ -489,7 +493,18 @@ def main():
         default=30.0,
         help="Frames per second for output videos (default: 30.0)",
     )
-    
+    parser.add_argument(
+        "--mhr_path",
+        type=str,
+        default="",
+        help="Path to MHR model (optional)",
+    )
+    parser.add_argument(
+        "--ckpt_path",
+        type=str,
+        default="",
+        help="Path to SAM 3D Body model checkpoint (optional)",
+    )
     args = parser.parse_args()
     
     # Create data config & video loader

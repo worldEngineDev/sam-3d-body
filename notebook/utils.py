@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from sam_3d_body import load_sam_3d_body_hf, SAM3DBodyEstimator
+from sam_3d_body import load_sam_3d_body_hf, load_sam_3d_body, SAM3DBodyEstimator
 from sam_3d_body.metadata.mhr70 import pose_info as mhr70_pose_info
 from sam_3d_body.visualization.renderer import Renderer
 from sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
@@ -26,6 +26,8 @@ def setup_sam_3d_body(
     detector_path: str = "",
     segmentor_path: str = "",
     fov_path: str = "",
+    mhr_path: str = "",
+    ckpt_path: str = "",
     device: str = "cuda",
 ):
     """
@@ -39,6 +41,8 @@ def setup_sam_3d_body(
         detector_path: URL or path for human detector model
         segmentor_path: Path to human segmentor model (optional)
         fov_path: path for FOV estimator
+        mhr_path: path for MHR model
+        
         device: Device to use (default: auto-detect cuda/cpu)
 
     Returns:
@@ -49,9 +53,12 @@ def setup_sam_3d_body(
     # Auto-detect device if not specified
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Load core model from HuggingFace
-    model, model_cfg = load_sam_3d_body_hf(hf_repo_id, device=device)
+    if ckpt_path:
+        print(f"Loading SAM 3D Body model from Local Checkpoint: {ckpt_path} and MHR: {mhr_path}...")
+        model, model_cfg = load_sam_3d_body(checkpoint_path=ckpt_path, device=device, mhr_path=mhr_path)
+    else:
+        # Load core model from HuggingFace
+        model, model_cfg = load_sam_3d_body_hf(hf_repo_id, device=device)
 
     # Initialize optional components
     human_detector, human_segmentor, fov_estimator = None, None, None
