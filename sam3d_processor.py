@@ -78,6 +78,7 @@ def save_results_by_type(
     visualizer,
     output_dir: str,
     image_name: str,
+    debug_vis: bool = False,
 ) -> dict:
     """
     Save results organized by type in separate folders.
@@ -126,6 +127,9 @@ def save_results_by_type(
     with open(keypoints_path, 'w') as f:
         json.dump(keypoints_data, f, indent=2)
     saved_counts['keypoints'] += 1
+
+    if not debug_vis:
+        return saved_counts
     
     # Visualize 2D results with skeleton
     skeleton_images = visualize_2d_results(img_cv2, outputs, visualizer)
@@ -316,6 +320,7 @@ def process_images(
     fov_path: str = "",
     create_videos: bool = True,
     video_fps: float = 30.0,
+    debug_vis: bool = False,
 ):
     """
     Process a list of images with SAM 3D Body and save results.
@@ -331,6 +336,7 @@ def process_images(
         detector_path: Path to detector model (optional)
         segmentor_path: Path to segmentor model (optional)
         fov_path: Path to FOV estimator model (optional)
+        debug_vis: Whether to save debug visualizations
     """
     # Set up SAM 3D Body estimator
     print("Setting up SAM 3D Body estimator...")
@@ -375,7 +381,7 @@ def process_images(
             
             # Save all results organized by type
             saved_counts = save_results_by_type(
-                left_frame, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}"
+                left_frame, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}", debug_vis=debug_vis
             )
             
             # print(f"\n✓ Processed {frame_idx}")
@@ -510,6 +516,11 @@ def main():
         default="pretrained_models/sam-3d-body-dinov3/model.ckpt",
         help="Path to SAM 3D Body model checkpoint",
     )
+    parser.add_argument(
+        "--debug_vis",
+        action="store_true",
+        help="Save debug visualizations (default: debug visualizations are not saved)",
+    )
     args = parser.parse_args()
     
     # Create data config & video loader
@@ -518,7 +529,7 @@ def main():
     if args.local_output_dir and args.output_dir is not None:
         output_dir = args.output_dir
     else:
-        output_dir = data_config.data_cache_dir
+        output_dir = data_config.data_cache_dir + "/sam3d"
     
     os.makedirs(output_dir, exist_ok=True)
     # Process images
@@ -537,6 +548,7 @@ def main():
         video_fps=args.video_fps,
         mhr_path=args.mhr_path,
         ckpt_path=args.ckpt_path,
+        debug_vis=args.debug_vis,
     )
 
 
