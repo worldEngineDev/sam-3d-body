@@ -39,6 +39,9 @@ from notebook.utils import (
 
 from we_cfg.fdc.config import RectificationConfig, StereoDataConfig
 from we_cfg.fdc.rectify_video import VideoRectifier, load_rectifier_from_cfg
+from we_cfg.fdc.data_define import StereoData
+from we_cfg.fdc.data_loader import StereoDataLoader, load_stereo_data_loader_from_cfg   
+from we_cfg.fdc.config import HumanReconConfig
 
 
 def find_images_in_directory(directory_path: str, recursive: bool = True) -> List[str]:
@@ -306,7 +309,7 @@ def load_image_list(image_list_path: str) -> List[str]:
 
 
 def process_images(
-    video_loader: VideoRectifier,
+    stereo_loader: StereoDataLoader,
     output_dir: str,
     hf_repo_id: str = "facebook/sam-3d-body-dinov3",
     detector_name: str = "vitdet",
@@ -320,13 +323,14 @@ def process_images(
     fov_path: str = "",
     create_videos: bool = True,
     video_fps: float = 30.0,
+    frame_step: int = 10,
     debug_vis: bool = False,
 ):
     """
     Process a list of images with SAM 3D Body and save results.
     
     Args:
-        video_loader: VideoRectifier instance
+        video_loader: StereoDataLoader instance
         output_dir: Directory to save output files
         hf_repo_id: HuggingFace repository ID for the model
         detector_name: Name of detector to use
@@ -364,35 +368,23 @@ def process_images(
     successful = 0
     failed = 0
     
-    for frame_idx in tqdm(video_loader.get_frame_list(), desc="Processing frames"):
+    for frame_idx in tqdm(stereo_loader.get_frame_list(frame_step=frame_step), desc="Processing frames"):
         try:
             # Load frame
-            left_frame, right_frame = video_loader.read_and_rectify(frame_idx)
-
-            camera_params = video_loader.get_camera_params()
+            stereo_data: StereoData = stereo_loader[frame_idx]
             
             # Process the image with SAM 3D Body
             use_load_int = True
             if use_load_int:
-                cam_int_tensor = torch.from_numpy(np.array(camera_params["K_new"])).to(device)[None, :, :]
+                cam_int_tensor = torch.from_numpy(np.array(stereo_data.intrinsic)).to(device)[None, :, :]
             else:
                 cam_int_tensor = None
-            outputs = estimator.process_one_image(img=left_frame, cam_int=cam_int_tensor)
+            outputs = estimator.process_one_image(img=stereo_data.left_image, cam_int=cam_int_tensor)
             
             # Save all results organized by type
             saved_counts = save_results_by_type(
-                left_frame, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}", debug_vis=debug_vis
+                stereo_data.left_image, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}", debug_vis=debug_vis
             )
-            
-            # print(f"\n✓ Processed {frame_idx}")
-            # print(f"  Number of people detected: {len(outputs)}")
-            # print(f"  Saved files:")
-            # print(f"    - Meshes: {saved_counts['meshes']}")
-            # print(f"    - Overlays: {saved_counts['overlays']}")
-            # print(f"    - BBoxes: {saved_counts['bboxes']}")
-            # print(f"    - Skeletons: {saved_counts['skeletons']}")
-            # print(f"    - Focal lengths: {saved_counts['focal_lengths']}")
-            
             successful += 1
             
         except Exception as e:
@@ -412,7 +404,7 @@ def process_images(
     # Print summary
     print("\n" + "="*60)
     print("Processing Summary:")
-    print(f"  Total frames: {len(video_loader.get_frame_list())}")
+    print(f"  Total frames: {len(stereo_loader.get_frame_list())}")
     print(f"  Successful: {successful}")
     print(f"  Failed: {failed}")
     print(f"  Output directory: {output_dir}")
@@ -438,49 +430,6 @@ def main():
         default="output",
         help="Output directory",
     )
-    # Model options
-    parser.add_argument(
-        "--hf_repo_id",
-        type=str,
-        default="facebook/sam-3d-body-dinov3",
-        help="HuggingFace repository ID for the model (default: facebook/sam-3d-body-dinov3)",
-    )
-    parser.add_argument(
-        "--detector_name",
-        type=str,
-        default="vitdet",
-        help="Human detection model name (default: vitdet)",
-    )
-    parser.add_argument(
-        "--segmentor_name",
-        type=str,
-        default="sam2",
-        help="Human segmentation model name (default: sam2)",
-    )
-    parser.add_argument(
-        "--fov_name",
-        type=str,
-        default="moge2",
-        help="FOV estimation model name (default: moge2)",
-    )
-    parser.add_argument(
-        "--detector_path",
-        type=str,
-        default="",
-        help="Path to human detection model (optional)",
-    )
-    parser.add_argument(
-        "--segmentor_path",
-        type=str,
-        default="",
-        help="Path to human segmentation model (optional)",
-    )
-    parser.add_argument(
-        "--fov_path",
-        type=str,
-        default="",
-        help="Path to FOV estimation model (optional)",
-    )
     parser.add_argument(
         "--device",
         type=str,
@@ -505,18 +454,6 @@ def main():
         help="Frames per second for output videos (default: 30.0)",
     )
     parser.add_argument(
-        "--mhr_path",
-        type=str,
-        default="pretrained_models/sam-3d-body-dinov3/assets/mhr_model.pt",
-        help="Path to MHR model (optional)",
-    )
-    parser.add_argument(
-        "--ckpt_path",
-        type=str,
-        default="pretrained_models/sam-3d-body-dinov3/model.ckpt",
-        help="Path to SAM 3D Body model checkpoint",
-    )
-    parser.add_argument(
         "--debug_vis",
         action="store_true",
         help="Save debug visualizations (default: debug visualizations are not saved)",
@@ -525,29 +462,31 @@ def main():
     
     # Create data config & video loader
     data_config = StereoDataConfig.from_yaml(yaml_path=args.data_config)
-    video_loader = load_rectifier_from_cfg(data_config.rectify_config)
+    video_loader = load_stereo_data_loader_from_cfg(data_config.rectify_config)
     if args.local_output_dir and args.output_dir is not None:
         output_dir = args.output_dir
     else:
         output_dir = data_config.data_cache_dir + "/sam3d"
-    
+
+    human_recon_config: HumanReconConfig = HumanReconConfig.from_yaml(yaml_path=args.data_config)
     os.makedirs(output_dir, exist_ok=True)
     # Process images
     process_images(
-        video_loader=video_loader,
+        stereo_loader=video_loader,
         output_dir=output_dir,
-        hf_repo_id=args.hf_repo_id,
-        detector_name=args.detector_name,
-        segmentor_name=args.segmentor_name,
-        fov_name=args.fov_name,
+        hf_repo_id=human_recon_config.hf_repo_id,
+        detector_name=human_recon_config.detector_name,
+        segmentor_name=human_recon_config.segmentor_name,
+        fov_name=human_recon_config.fov_name,
         device=args.device,
-        detector_path=args.detector_path,
-        segmentor_path=args.segmentor_path,
-        fov_path=args.fov_path,
+        detector_path=human_recon_config.detector_path,
+        segmentor_path=human_recon_config.segmentor_path,
+        fov_path=human_recon_config.fov_path,
         create_videos=not args.no_videos,
         video_fps=args.video_fps,
-        mhr_path=args.mhr_path,
-        ckpt_path=args.ckpt_path,
+        mhr_path=human_recon_config.mhr_path,
+        ckpt_path=human_recon_config.ckpt_path,
+        frame_step=human_recon_config.frame_step,
         debug_vis=args.debug_vis,
     )
 

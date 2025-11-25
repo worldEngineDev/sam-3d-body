@@ -1,10 +1,10 @@
 data:
-  chunk_id: '0001'
+  chunk_id: '0002'
   data_root: /home/haonan/Data
   device_id: 2ed0
   frame_range:
   - 0
-  - 100
+  - 550
   kalibr_yaml_path: /home/haonan/Data/2ed0/calibration/down_calibration.yaml
   primary_view: down
   process_views:
@@ -23,6 +23,18 @@ depth:
   stereo_depth_cfg_path: /app/FDCPost/config/stereo_depth_cfg.yaml
   width: 1024
   z_far: 20
+human_recon:
+  algorithm: sam3d
+  hf_repo_id: facebook/sam-3d-body-dinov3
+  detector_name: vitdet
+  segmentor_name: sam2
+  fov_name: moge2
+  detector_path: null
+  segmentor_path: null
+  fov_path: null
+  mhr_path: null
+  ckpt_path: "/app/FDCPost/pretrained_models/sam-3d-body-dinov3/model.ckpt"
+  frame_step: 10
 human_pose:
   algorithm: we_human_pose
   camera_angle:
