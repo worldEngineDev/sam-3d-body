@@ -39,7 +39,7 @@ from notebook.utils import (
 
 from we_cfg.fdc.config import RectificationConfig, StereoDataConfig
 from we_cfg.fdc.rectify_video import VideoRectifier, load_rectifier_from_cfg
-from we_cfg.fdc.data_define import StereoData, Kpt3D
+from we_cfg.fdc.data_define import StereoData, Kpt3D, BatchKpt3D
 from we_cfg.fdc.data_loader import StereoDataLoader, load_stereo_data_loader_from_cfg   
 from we_cfg.fdc.config import HumanReconConfig
 
@@ -74,15 +74,13 @@ def find_images_in_directory(directory_path: str, recursive: bool = True) -> Lis
     return sorted(image_paths)
 
 
-def save_results_by_type(
+def save_debug_result(
     stereo_data: StereoData,
     outputs: List[dict],
     faces: np.ndarray,
     visualizer,
     output_dir: str,
     image_name: str,
-    debug_vis: bool = False,
-    ego_valid_dist: float = 0.5,
 ) -> dict:
     """
     Save results organized by type in separate folders.
@@ -117,39 +115,6 @@ def save_results_by_type(
         'skeletons': 0,
         'keypoints': 0,
     }
-    
-    # Save keypoints
-    keypoints_filename = f"{image_name}_kpts3d.npz"
-    keypoints_path = os.path.join(dirs['keypoints'], keypoints_filename)
-
-    human_kpts = []
-    human_kpts_dist = []
-    for pid, person_output in enumerate(outputs):
-        person_kpts = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
-        person_kpts_dist = np.linalg.norm(person_kpts[0, ...], axis=-1)
-        if person_kpts_dist > ego_valid_dist:
-            continue
-        human_kpts.append(person_kpts)
-        human_kpts_dist.append(person_kpts_dist)
-    # Select the closest human keypoints to the camera
-    if len(human_kpts) > 0:
-        closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
-        ego_kpts = closest_human_kpts
-    else:
-        ego_kpts = np.zeros((0, 3))
-    # Convert to Kpt3D
-    kpt3d = Kpt3D(
-        frame_name=stereo_data.frame_name,
-        timestamp=stereo_data.timestamp,
-        kpts=ego_kpts,
-        kpts_score=np.array([1.0] * len(ego_kpts)),
-        kpts_names=[],
-    )
-    kpt3d.save(keypoints_path)
-    saved_counts['keypoints'] += 1
-
-    if not debug_vis:
-        return saved_counts
     
     # Visualize 2D results with skeleton
     skeleton_images = visualize_2d_results(stereo_data.left_image, outputs, visualizer)
@@ -210,7 +175,6 @@ def save_results_by_type(
         cv2.imwrite(skeleton_path, skeleton_images[pid])
         saved_counts['skeletons'] += 1
     
-    print(f"saved {image_name} with {ego_kpts.shape[0]} ego keypoints")
     return saved_counts
 
 
@@ -387,6 +351,12 @@ def process_images(
     successful = 0
     failed = 0
     
+    # Buffer
+    idxs = []
+    timestamps = []
+    kpts_list = []
+    kpts_scores_list = []
+
     for frame_idx in tqdm(stereo_loader.get_frame_list(frame_step=frame_step), desc="Processing frames"):
         try:
             # Load frame
@@ -398,47 +368,60 @@ def process_images(
                 cam_int_tensor = torch.from_numpy(np.array(stereo_data.intrinsic)).to(device)[None, :, :]
             else:
                 cam_int_tensor = None
-            outputs = estimator.process_one_image(img=stereo_data.left_image, cam_int=cam_int_tensor)
+
+            # Convert BGR to RGB
+            # left_image_rgb = cv2.cvtColor(stereo_data.left_image, cv2.COLOR_BGR2RGB)
+            left_image_rgb = stereo_data.left_image
+            outputs = estimator.process_one_image(img=left_image_rgb, cam_int=cam_int_tensor)
             
-            # Save all results organized by type
-            saved_counts = save_results_by_type(
-                stereo_data, 
-                outputs, 
-                estimator.faces, 
-                visualizer, 
-                output_dir, 
-                f"frame_{frame_idx:06d}", 
-                debug_vis=debug_vis,
-                ego_valid_dist=ego_valid_dist,
-            )
+            # Update buffer
+            human_kpts = []
+            human_kpts_dist = []
+            for pid, person_output in enumerate(outputs):
+                person_kpts = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
+                person_kpts_dist = np.linalg.norm(person_kpts[0, ...], axis=-1)
+                if person_kpts_dist > ego_valid_dist:
+                    continue
+                human_kpts.append(person_kpts)
+                human_kpts_dist.append(person_kpts_dist)
+            # Select the closest human keypoints to the camera
+            if len(human_kpts) > 0:
+                closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
+                ego_kpts = closest_human_kpts
+            else:
+                ego_kpts = np.zeros((0, 3))
+            # Convert to Kpt3D
+            idxs.append(frame_idx)
+            timestamps.append(stereo_data.timestamp)
+            kpts_list.append(ego_kpts)
+            kpts_scores_list.append(np.array([1.0] * len(ego_kpts)))
             successful += 1
+
+            if debug_vis:
+                save_debug_result(
+                    stereo_data,
+                    outputs,
+                    estimator.faces,
+                    visualizer,
+                    output_dir,
+                    f"frame_{frame_idx:06d}",
+                )
             
         except Exception as e:
             print(f"\nError processing {frame_idx}: {str(e)}")
             import traceback
             traceback.print_exc()
             failed += 1
-    
-    # Create videos from skeleton and overlay images
-    videos_created = {}
-    if create_videos and successful > 0:
-        print("\n" + "="*60)
-        print("Creating videos from processed images...")
-        print("="*60)
-        videos_created = create_videos_from_outputs(output_dir, fps=video_fps)
-    
-    # Print summary
-    print("\n" + "="*60)
-    print("Processing Summary:")
-    print(f"  Total frames: {len(stereo_loader.get_frame_list())}")
-    print(f"  Successful: {successful}")
-    print(f"  Failed: {failed}")
-    print(f"  Output directory: {output_dir}")
-    if videos_created:
-        print(f"\n  Videos created:")
-        for video_type, video_path in videos_created.items():
-            print(f"    - {video_type}: {video_path}")
-    print("="*60)
+    # Save buffer
+    batch_kpts3d = BatchKpt3D(
+        frame_idxs=idxs,
+        timestamps=timestamps,
+        frame_name=stereo_data.frame_name,
+        kpts=kpts_list,
+        kpts_scores=kpts_scores_list,
+        kpts_names=[],
+    )
+    batch_kpts3d.save(os.path.join(output_dir, "kpts3d.npz"))
 
 
 def main():
