@@ -39,7 +39,7 @@ from notebook.utils import (
 
 from we_cfg.fdc.config import RectificationConfig, StereoDataConfig
 from we_cfg.fdc.rectify_video import VideoRectifier, load_rectifier_from_cfg
-from we_cfg.fdc.data_define import StereoData
+from we_cfg.fdc.data_define import StereoData, Kpt3D
 from we_cfg.fdc.data_loader import StereoDataLoader, load_stereo_data_loader_from_cfg   
 from we_cfg.fdc.config import HumanReconConfig
 
@@ -75,19 +75,20 @@ def find_images_in_directory(directory_path: str, recursive: bool = True) -> Lis
 
 
 def save_results_by_type(
-    img_cv2: np.ndarray,
+    stereo_data: StereoData,
     outputs: List[dict],
     faces: np.ndarray,
     visualizer,
     output_dir: str,
     image_name: str,
     debug_vis: bool = False,
+    ego_valid_dist: float = 0.5,
 ) -> dict:
     """
     Save results organized by type in separate folders.
     
     Args:
-        img_cv2: Input image (BGR format)
+        stereo_data: Stereo data
         outputs: List of person outputs from SAM 3D Body
         faces: Mesh faces from estimator
         visualizer: Skeleton visualizer
@@ -117,25 +118,41 @@ def save_results_by_type(
         'keypoints': 0,
     }
     
-   
     # Save keypoints
-    keypoints_filename = f"{image_name}_keypoints.json"
+    keypoints_filename = f"{image_name}_kpts3d.npz"
     keypoints_path = os.path.join(dirs['keypoints'], keypoints_filename)
-    keypoints_data = []
+
+    human_kpts = []
+    human_kpts_dist = []
     for pid, person_output in enumerate(outputs):
-        keypoints_data.append({
-            'pid': pid,
-            'keypoints': (person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]).tolist(),
-        })
-    with open(keypoints_path, 'w') as f:
-        json.dump(keypoints_data, f, indent=2)
+        person_kpts = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
+        person_kpts_dist = np.linalg.norm(person_kpts[0, ...], axis=-1)
+        if person_kpts_dist > ego_valid_dist:
+            continue
+        human_kpts.append(person_kpts)
+        human_kpts_dist.append(person_kpts_dist)
+    # Select the closest human keypoints to the camera
+    if len(human_kpts) > 0:
+        closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
+        ego_kpts = closest_human_kpts
+    else:
+        ego_kpts = np.zeros((0, 3))
+    # Convert to Kpt3D
+    kpt3d = Kpt3D(
+        frame_name=stereo_data.frame_name,
+        timestamp=stereo_data.timestamp,
+        kpts=ego_kpts,
+        kpts_score=np.array([1.0] * len(ego_kpts)),
+        kpts_names=[],
+    )
+    kpt3d.save(keypoints_path)
     saved_counts['keypoints'] += 1
 
     if not debug_vis:
         return saved_counts
     
     # Visualize 2D results with skeleton
-    skeleton_images = visualize_2d_results(img_cv2, outputs, visualizer)
+    skeleton_images = visualize_2d_results(stereo_data.left_image, outputs, visualizer)
     
     # Import renderer for mesh visualization
     from sam_3d_body.visualization.renderer import Renderer
@@ -161,7 +178,7 @@ def save_results_by_type(
             renderer(
                 person_output["pred_vertices"],
                 person_output["pred_cam_t"],
-                img_cv2.copy(),
+                stereo_data.left_image.copy(),
                 mesh_base_color=LIGHT_BLUE,
                 scene_bg_color=(1, 1, 1),
             )
@@ -173,7 +190,7 @@ def save_results_by_type(
         saved_counts['overlays'] += 1
         
         # Save bbox image (from skeleton visualization, but we'll create a simpler version)
-        img_bbox = img_cv2.copy()
+        img_bbox = stereo_data.left_image.copy()
         bbox = person_output["bbox"]
         img_bbox = cv2.rectangle(
             img_bbox,
@@ -193,6 +210,7 @@ def save_results_by_type(
         cv2.imwrite(skeleton_path, skeleton_images[pid])
         saved_counts['skeletons'] += 1
     
+    print(f"saved {image_name} with {ego_kpts.shape[0]} ego keypoints")
     return saved_counts
 
 
@@ -324,6 +342,7 @@ def process_images(
     create_videos: bool = True,
     video_fps: float = 30.0,
     frame_step: int = 10,
+    ego_valid_dist: float = 0.5,
     debug_vis: bool = False,
 ):
     """
@@ -383,7 +402,14 @@ def process_images(
             
             # Save all results organized by type
             saved_counts = save_results_by_type(
-                stereo_data.left_image, outputs, estimator.faces, visualizer, output_dir, f"frame_{frame_idx:06d}", debug_vis=debug_vis
+                stereo_data, 
+                outputs, 
+                estimator.faces, 
+                visualizer, 
+                output_dir, 
+                f"frame_{frame_idx:06d}", 
+                debug_vis=debug_vis,
+                ego_valid_dist=ego_valid_dist,
             )
             successful += 1
             
@@ -463,10 +489,11 @@ def main():
     # Create data config & video loader
     data_config = StereoDataConfig.from_yaml(yaml_path=args.data_config)
     video_loader = load_stereo_data_loader_from_cfg(data_config.rectify_config)
-    if args.local_output_dir and args.output_dir is not None:
-        output_dir = args.output_dir
-    else:
-        output_dir = data_config.data_cache_dir + "/sam3d"
+    # if args.local_output_dir and args.output_dir is not None:
+    #     output_dir = args.output_dir
+    # else:
+    #     output_dir = data_config.data_cache_dir + "/sam3d"
+    output_dir = args.output_dir
 
     human_recon_config: HumanReconConfig = HumanReconConfig.from_yaml(yaml_path=args.data_config)
     os.makedirs(output_dir, exist_ok=True)
@@ -487,6 +514,7 @@ def main():
         mhr_path=human_recon_config.mhr_path,
         ckpt_path=human_recon_config.ckpt_path,
         frame_step=human_recon_config.frame_step,
+        ego_valid_dist=human_recon_config.ego_valid_dist,
         debug_vis=args.debug_vis,
     )
 

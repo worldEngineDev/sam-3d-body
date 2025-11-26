@@ -1,5 +1,5 @@
 data:
-  chunk_id: '0002'
+  chunk_id: '0007'
   data_root: /home/haonan/Data
   device_id: 2ed0
   frame_range:
@@ -35,6 +35,7 @@ human_recon:
   mhr_path: null
   ckpt_path: "/app/FDCPost/pretrained_models/sam-3d-body-dinov3/model.ckpt"
   frame_step: 10
+  ego_valid_dist: 0.5  # How far the person is from the camera is considered as ego person
 human_pose:
   algorithm: we_human_pose
   camera_angle:
