@@ -475,8 +475,8 @@ def main():
     # if args.local_output_dir and args.output_dir is not None:
     #     output_dir = args.output_dir
     # else:
-    #     output_dir = data_config.data_cache_dir + "/sam3d"
-    output_dir = args.output_dir
+    output_dir = data_config.data_cache_dir + "/sam3d" + "/keypoints"
+
 
     human_recon_config: HumanReconConfig = HumanReconConfig.from_yaml(yaml_path=args.data_config)
     os.makedirs(output_dir, exist_ok=True)
