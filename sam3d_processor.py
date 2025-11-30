@@ -25,6 +25,7 @@ import numpy as np
 import torch
 import random
 from tqdm import tqdm
+from loguru import logger
 
 # Add notebook utils to path if running from root
 notebook_dir = Path(__file__).parent / "notebook"
@@ -309,6 +310,7 @@ def process_images(
     frame_step: int = 10,
     ego_valid_dist: float = 0.5,
     debug_vis: bool = False,
+    valid_min_conti_frames: int = 10,
 ):
     """
     Process a list of images with SAM 3D Body and save results.
@@ -357,6 +359,7 @@ def process_images(
     timestamps = []
     kpts_list = []
     kpts_scores_list = []
+    last_invalid_frame_idx = None
 
     for frame_idx in tqdm(stereo_loader.get_frame_list(frame_step=frame_step), desc="Processing frames"):
         try:
@@ -386,13 +389,27 @@ def process_images(
                 human_kpts.append(person_kpts)
                 human_kpts_dist.append(person_kpts_dist)
             # Select the closest human keypoints to the camera
+            if last_invalid_frame_idx is None:
+                last_invalid_frame_idx = frame_idx  # Initialize the last invalid frame index
+
             if len(human_kpts) > 0:
                 closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
                 ego_kpts = closest_human_kpts
-                ego_kpts_scores = np.array([1.0] * len(closest_human_kpts))
+                if frame_idx - last_invalid_frame_idx > valid_min_conti_frames:
+                    is_valid = True
+                else:
+                    is_valid = False
+            else:
+                last_invalid_frame_idx = frame_idx
+                is_valid = False
+
+            if is_valid:
+                ego_kpts_scores = np.array([1.0] * len(ego_kpts))
+                # logger.info(f"Valid frame {frame_idx}")
             else:
                 ego_kpts = np.zeros((70, 3))
                 ego_kpts_scores = np.zeros((70,))
+
             # Convert to Kpt3D
             idxs.append(frame_idx)
             timestamps.append(stereo_data.timestamp)
@@ -433,7 +450,7 @@ def main():
     parser.add_argument(
         "--data_config", "-c",
         type=str,
-        default="configs/config_0000_down.yaml",
+        default="/app/FDCPost/config/config_0001_2_down.yaml",
         help="Path to data config file",
     )
     parser.add_argument(
@@ -501,7 +518,9 @@ def main():
         ckpt_path=human_recon_config.ckpt_path,
         frame_step=human_recon_config.frame_step,
         ego_valid_dist=human_recon_config.ego_valid_dist,
-        debug_vis=args.debug_vis,
+        valid_min_conti_frames=human_recon_config.valid_min_conti_frames,
+        # debug_vis=args.debug_vis,
+        debug_vis=True,
     )
 
 
