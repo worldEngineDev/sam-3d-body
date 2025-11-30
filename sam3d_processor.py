@@ -23,6 +23,7 @@ from typing import List
 import cv2
 import numpy as np
 import torch
+import random
 from tqdm import tqdm
 
 # Add notebook utils to path if running from root
@@ -385,16 +386,18 @@ def process_images(
                 human_kpts.append(person_kpts)
                 human_kpts_dist.append(person_kpts_dist)
             # Select the closest human keypoints to the camera
-            if len(human_kpts) > 0:
+            if len(human_kpts) > 0 and random.random() < 0.5: # 50% chance to use the closest human keypoints
                 closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
                 ego_kpts = closest_human_kpts
+                ego_kpts_scores = np.array([1.0] * len(closest_human_kpts))
             else:
-                ego_kpts = np.zeros((0, 3))
+                ego_kpts = np.zeros((70, 3))
+                ego_kpts_scores = np.zeros((70,))
             # Convert to Kpt3D
             idxs.append(frame_idx)
             timestamps.append(stereo_data.timestamp)
             kpts_list.append(ego_kpts)
-            kpts_scores_list.append(np.array([1.0] * len(ego_kpts)))
+            kpts_scores_list.append(ego_kpts_scores)
             successful += 1
 
             if debug_vis:
