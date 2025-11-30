@@ -386,7 +386,7 @@ def process_images(
                 human_kpts.append(person_kpts)
                 human_kpts_dist.append(person_kpts_dist)
             # Select the closest human keypoints to the camera
-            if len(human_kpts) > 0 and random.random() < 0.5: # 50% chance to use the closest human keypoints
+            if len(human_kpts) > 0:
                 closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
                 ego_kpts = closest_human_kpts
                 ego_kpts_scores = np.array([1.0] * len(closest_human_kpts))
