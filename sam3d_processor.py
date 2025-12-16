@@ -361,7 +361,7 @@ def process_images(
     kpts_scores_list = []
     last_invalid_frame_idx = None
 
-    for frame_idx in tqdm(stereo_loader.get_frame_list(frame_step=frame_step), desc="Processing frames"):
+    for frame_idx in stereo_loader.get_frame_list(frame_step=frame_step):
         try:
             # Load frame
             stereo_data: StereoData = stereo_loader[frame_idx]
