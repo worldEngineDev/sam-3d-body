@@ -443,6 +443,10 @@ def process_images(
     )
     batch_kpts3d.save(os.path.join(output_dir, "kpts3d.npz"))
 
+    if debug_vis and create_videos:
+        print("Creating videos from debug visualizations...")
+        create_videos_from_outputs(output_dir, fps=video_fps)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process images with SAM 3D Body")
