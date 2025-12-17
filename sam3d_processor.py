@@ -475,7 +475,7 @@ def main():
     parser.add_argument(
         "--data_root", "-d",
         type=str,
-        default="/home/haonan/Projects/we_human_pose/data",
+        default="/app/FDCPost/data",
         help="Data root directory",
     )
     parser.add_argument(
