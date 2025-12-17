@@ -14,17 +14,17 @@ This script processes multiple images and saves results organized by type:
 """
 
 import argparse
-import json
 import os
+import copy
+import yaml
 import sys
 from pathlib import Path
 from typing import List
-
 import cv2
 import numpy as np
 import torch
-import random
 from tqdm import tqdm
+from scipy.spatial.transform import Rotation as R
 
 # Add notebook utils to path if running from root
 notebook_dir = Path(__file__).parent / "notebook"
@@ -40,9 +40,10 @@ from notebook.utils import (
 
 from we_cfg.fdc.config import RectificationConfig, StereoDataConfig
 from we_cfg.fdc.rectify_video import VideoRectifier, load_rectifier_from_cfg
-from we_cfg.fdc.data_define import StereoData, Kpt3D, BatchKpt3D
+from we_cfg.fdc.data_define import StereoData, Kpt3D, BatchKpt3D, HumanPose
 from we_cfg.fdc.data_loader import StereoDataLoader, load_stereo_data_loader_from_cfg   
 from we_cfg.fdc.config import HumanReconConfig
+from we_cfg.fdc.data_utils import create_human_pose_from_kpts
 
 
 def find_images_in_directory(directory_path: str, recursive: bool = True) -> List[str]:
@@ -356,6 +357,7 @@ def process_images(
     idxs = []
     timestamps = []
     kpts_list = []
+    human_poses_list = []
     kpts_scores_list = []
 
     for frame_idx in tqdm(stereo_loader.get_frame_list(frame_step=frame_step), desc="Processing frames"):
@@ -377,26 +379,49 @@ def process_images(
             
             # Update buffer
             human_kpts = []
+            human_poses = []
             human_kpts_dist = []
             for pid, person_output in enumerate(outputs):
                 person_kpts = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
+                person_vertices = copy.deepcopy(person_output["pred_vertices"]) + person_output["pred_cam_t"][None, :]
+
+                # # Rotate along x-axis by 180 degrees
+                # rot_x_axis = R.from_euler('x', 180, degrees=True).as_matrix()
+                # person_vertices = (rot_x_axis @ person_vertices.T).T
+
                 person_kpts_dist = np.linalg.norm(person_kpts[0, ...], axis=-1)
                 if person_kpts_dist > ego_valid_dist:
                     continue
+                
+                # Generate human pose object
+                person_kpts = Kpt3D(
+                    kpts=person_kpts,
+                    kpts_scores=np.ones(len(person_kpts)),
+                    kpts_names=[],
+                    frame_idx=frame_idx,
+                    timestamp=stereo_data.timestamp,
+                    frame_name=stereo_data.frame_name,
+                )
+                human_pose_sam3d = create_human_pose_from_kpts(person_kpts, person_vertices, "sam3d")
+                human_poses.append(human_pose_sam3d)
                 human_kpts.append(person_kpts)
                 human_kpts_dist.append(person_kpts_dist)
             # Select the closest human keypoints to the camera
             if len(human_kpts) > 0:
                 closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
+                closest_human_pose = human_poses[np.argmin(human_kpts_dist)]
                 ego_kpts = closest_human_kpts
-                ego_kpts_scores = np.array([1.0] * len(closest_human_kpts))
+                ego_kpts_scores = np.array([1.0] * closest_human_kpts.kpts.shape[0])
+                ego_pose = closest_human_pose
             else:
                 ego_kpts = np.zeros((70, 3))
                 ego_kpts_scores = np.zeros((70,))
+                ego_pose = HumanPose.get_invalid_human_pose()
             # Convert to Kpt3D
             idxs.append(frame_idx)
             timestamps.append(stereo_data.timestamp)
             kpts_list.append(ego_kpts)
+            human_poses_list.append(ego_pose)
             kpts_scores_list.append(ego_kpts_scores)
             successful += 1
 
@@ -415,16 +440,9 @@ def process_images(
             import traceback
             traceback.print_exc()
             failed += 1
-    # Save buffer
-    batch_kpts3d = BatchKpt3D(
-        frame_idxs=idxs,
-        timestamps=timestamps,
-        frame_name=stereo_data.frame_name,
-        kpts=kpts_list,
-        kpts_scores=kpts_scores_list,
-        kpts_names=[],
-    )
-    batch_kpts3d.save(os.path.join(output_dir, "kpts3d.npz"))
+
+    # Save human poses
+    np.savez(os.path.join(output_dir, "output.npz"), humanoid_poses=human_poses_list)
 
 
 def main():
@@ -455,6 +473,12 @@ def main():
         help="Skip video generation (default: videos are created)",
     )
     parser.add_argument(
+        "--data_root", "-d",
+        type=str,
+        default="/home/haonan/Projects/we_human_pose/data",
+        help="Data root directory",
+    )
+    parser.add_argument(
         "--local_output_dir",
         action="store_true",
         help="Use local storage for output directory (default: output directory is in the data root)",
@@ -473,13 +497,12 @@ def main():
     args = parser.parse_args()
     
     # Create data config & video loader
-    data_config = StereoDataConfig.from_yaml(yaml_path=args.data_config)
+    with open(args.data_config, "r") as f:
+        data_config = yaml.load(f, Loader=yaml.FullLoader)
+        data_config["data"]["data_root"] = args.data_root
+        data_config = StereoDataConfig(**data_config["data"])
     video_loader = load_stereo_data_loader_from_cfg(data_config.rectify_config)
-    # if args.local_output_dir and args.output_dir is not None:
-    #     output_dir = args.output_dir
-    # else:
-    output_dir = data_config.data_cache_dir + "/sam3d" + "/keypoints"
-
+    output_dir = data_config.data_cache_dir + "/sam3d"
 
     human_recon_config: HumanReconConfig = HumanReconConfig.from_yaml(yaml_path=args.data_config)
     os.makedirs(output_dir, exist_ok=True)
