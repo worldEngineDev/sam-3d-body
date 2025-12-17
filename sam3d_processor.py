@@ -544,8 +544,7 @@ def main():
         frame_step=human_recon_config.frame_step,
         ego_valid_dist=human_recon_config.ego_valid_dist,
         valid_min_conti_frames=human_recon_config.valid_min_conti_frames,
-        # debug_vis=args.debug_vis,
-        debug_vis=True,
+        debug_vis=args.debug_vis,
     )
 
 
