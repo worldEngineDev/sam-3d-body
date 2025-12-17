@@ -124,3 +124,4 @@ sandbox*
 notebook/images/*
 notebook/output/*
 output/*
+configs/*
