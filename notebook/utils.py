@@ -127,7 +127,7 @@ def visualize_2d_results(
         keypoints_2d_vis = np.concatenate(
             [keypoints_2d, np.ones((keypoints_2d.shape[0], 1))], axis=-1
         )
-        img_vis = visualizer.draw_skeleton(img_vis, keypoints_2d_vis)
+        img_vis = visualizer.draw_skeleton(img_vis, keypoints_2d_vis, show_kpt_idx=True)
 
         # Draw bounding box
         bbox = person_output["bbox"]

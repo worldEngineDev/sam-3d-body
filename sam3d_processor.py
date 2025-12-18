@@ -405,7 +405,7 @@ def process_images(
                     timestamp=stereo_data.timestamp,
                     frame_name=stereo_data.frame_name,
                 )
-                human_pose_sam3d = create_human_pose_from_kpts(person_kpts, person_vertices, "sam3d")
+                human_pose_sam3d = create_human_pose_from_kpts(person_kpts, person_vertices, "sam3d", frame_name=stereo_data.frame_name)
                 human_poses.append(human_pose_sam3d)
                 human_kpts.append(person_kpts)
                 human_kpts_dist.append(person_kpts_dist)
