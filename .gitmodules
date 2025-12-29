@@ -1,3 +1,4 @@
 [submodule "third_party/we_data_config"]
 	path = third_party/we_data_config
 	url = git@github.com:worldEngineDev/we_data_config.git
+	branch = main
