@@ -419,6 +419,8 @@ def process_images(
                 ego_kpts = closest_human_kpts
                 ego_kpts_scores = np.array([1.0] * closest_human_kpts.kpts.shape[0])
                 ego_pose = closest_human_pose
+                # Only save the valid human pose
+                human_poses_list.append(ego_pose)
             else:
                 ego_kpts = np.zeros((70, 3))
                 ego_kpts_scores = np.zeros((70,))
@@ -428,7 +430,6 @@ def process_images(
             idxs.append(frame_idx)
             timestamps.append(stereo_data.timestamp)
             kpts_list.append(ego_kpts)
-            human_poses_list.append(ego_pose)
             kpts_scores_list.append(ego_kpts_scores)
             successful += 1
 
