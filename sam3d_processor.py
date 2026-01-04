@@ -362,6 +362,9 @@ def process_images(
     human_poses_list = []
     kpts_scores_list = []
     last_invalid_frame_idx = None
+    
+    # Buffer for SLAM masking (bbox per keyframe)
+    slam_bbox_data = {}  # frame_idx -> bbox array [x1, y1, x2, y2]
 
     for frame_idx in stereo_loader.get_frame_list(frame_step=frame_step):
         try:
@@ -384,6 +387,7 @@ def process_images(
             human_kpts = []
             human_poses = []
             human_kpts_dist = []
+            human_bboxes = []  # Store bboxes for SLAM masking
             for pid, person_output in enumerate(outputs):
                 person_kpts = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
                 person_vertices = copy.deepcopy(person_output["pred_vertices"]) + person_output["pred_cam_t"][None, :]
@@ -395,6 +399,9 @@ def process_images(
                 person_kpts_dist = np.linalg.norm(person_kpts[0, ...], axis=-1)
                 if person_kpts_dist > ego_valid_dist:
                     continue
+                
+                # Store bbox for SLAM masking
+                human_bboxes.append(person_output["bbox"].copy())
                 
                 # Generate human pose object
                 person_kpts = Kpt3D(
@@ -414,13 +421,18 @@ def process_images(
                 last_invalid_frame_idx = frame_idx  # Initialize the last invalid frame index
 
             if len(human_kpts) > 0:
-                closest_human_kpts = human_kpts[np.argmin(human_kpts_dist)]
-                closest_human_pose = human_poses[np.argmin(human_kpts_dist)]
+                closest_idx = np.argmin(human_kpts_dist)
+                closest_human_kpts = human_kpts[closest_idx]
+                closest_human_pose = human_poses[closest_idx]
                 ego_kpts = closest_human_kpts
                 ego_kpts_scores = np.array([1.0] * closest_human_kpts.kpts.shape[0])
                 ego_pose = closest_human_pose
                 # Only save the valid human pose
                 human_poses_list.append(ego_pose)
+                
+                # Save bbox for SLAM masking
+                if len(human_bboxes) > closest_idx:
+                    slam_bbox_data[frame_idx] = human_bboxes[closest_idx]
             else:
                 ego_kpts = np.zeros((70, 3))
                 ego_kpts_scores = np.zeros((70,))
@@ -451,6 +463,17 @@ def process_images(
 
     # Save human poses
     np.savez(os.path.join(output_dir, "output.npz"), humanoid_poses=human_poses_list)
+    
+    # Save bbox data for SLAM masking
+    # Format: {frame_idx: [x1, y1, x2, y2], ...}
+    bbox_output_path = os.path.join(output_dir, "slam_bboxes.npz")
+    if slam_bbox_data:
+        frame_indices = np.array(list(slam_bbox_data.keys()), dtype=np.int64)
+        bboxes = np.array([slam_bbox_data[idx] for idx in frame_indices], dtype=np.float32)
+        np.savez(bbox_output_path, frame_indices=frame_indices, bboxes=bboxes)
+        print(f"Saved {len(slam_bbox_data)} bboxes for SLAM masking to {bbox_output_path}")
+    else:
+        print("Warning: No valid bboxes detected for SLAM masking")
 
     if debug_vis and create_videos:
         print("Creating videos from debug visualizations...")
