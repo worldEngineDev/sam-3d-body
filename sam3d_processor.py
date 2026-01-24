@@ -84,6 +84,7 @@ def save_debug_result(
     visualizer,
     output_dir: str,
     image_name: str,
+    view: str = "left",
 ) -> dict:
     """
     Save results organized by type in separate folders.
@@ -95,7 +96,7 @@ def save_debug_result(
         visualizer: Skeleton visualizer
         output_dir: Base output directory
         image_name: Base name for output files
-        
+        view: View to use for processing (default: left)
     Returns:
         Dictionary with counts of saved files
     """
@@ -120,7 +121,7 @@ def save_debug_result(
     }
     
     # Visualize 2D results with skeleton
-    skeleton_images = visualize_2d_results(stereo_data.left_image, outputs, visualizer)
+    skeleton_images = visualize_2d_results(stereo_data.get_image(view), outputs, visualizer)
     
     # Import renderer for mesh visualization
     from sam_3d_body.visualization.renderer import Renderer
@@ -146,7 +147,7 @@ def save_debug_result(
             renderer(
                 person_output["pred_vertices"],
                 person_output["pred_cam_t"],
-                stereo_data.left_image.copy(),
+                stereo_data.get_image(view).copy(),
                 mesh_base_color=LIGHT_BLUE,
                 scene_bg_color=(1, 1, 1),
             )
@@ -158,7 +159,7 @@ def save_debug_result(
         saved_counts['overlays'] += 1
         
         # Save bbox image (from skeleton visualization, but we'll create a simpler version)
-        img_bbox = stereo_data.left_image.copy()
+        img_bbox = stereo_data.get_image(view).copy()
         bbox = person_output["bbox"]
         img_bbox = cv2.rectangle(
             img_bbox,
@@ -177,6 +178,40 @@ def save_debug_result(
         skeleton_path = os.path.join(dirs['skeletons'], skeleton_filename)
         cv2.imwrite(skeleton_path, skeleton_images[pid])
         saved_counts['skeletons'] += 1
+        
+        # Save keypoints as sphere meshes
+        import trimesh
+        
+        # Get 3D keypoints (add camera translation to get world coordinates)
+        keypoints_3d = person_output["pred_keypoints_3d"] + person_output["pred_cam_t"][None, :]
+        
+        # Create spheres for each keypoint
+        sphere_radius = 0.02  # 2cm radius for each keypoint sphere
+        keypoint_meshes = []
+        
+        for kpt_idx, kpt in enumerate(keypoints_3d):
+            # Create a sphere at the keypoint location
+            sphere = trimesh.creation.icosphere(subdivisions=2, radius=sphere_radius)
+            sphere.apply_translation(kpt)
+            
+            # Color the sphere (use different colors for different body parts)
+            # Simple color scheme: gradient from red to blue based on index
+            color_ratio = kpt_idx / max(len(keypoints_3d) - 1, 1)
+            color = [
+                int(255 * (1 - color_ratio)),  # R
+                int(128),                       # G
+                int(255 * color_ratio),         # B
+                255                             # A
+            ]
+            sphere.visual.vertex_colors = np.array([color] * len(sphere.vertices), dtype=np.uint8)
+            keypoint_meshes.append(sphere)
+        # Combine all keypoint spheres into a single mesh
+        if keypoint_meshes:
+            combined_keypoints_mesh = trimesh.util.concatenate(keypoint_meshes)
+            keypoints_filename = f"{image_name}_keypoints_{pid:03d}.ply"
+            keypoints_path = os.path.join(dirs['keypoints'], keypoints_filename)
+            combined_keypoints_mesh.export(keypoints_path)
+            saved_counts['keypoints'] += 1
     
     return saved_counts
 
@@ -310,6 +345,7 @@ def process_images(
     video_fps: float = 30.0,
     frame_step: int = 10,
     ego_valid_dist: float = 0.5,
+    view: str = "left",
     debug_vis: bool = False,
     valid_min_conti_frames: int = 10,
 ):
@@ -327,6 +363,7 @@ def process_images(
         detector_path: Path to detector model (optional)
         segmentor_path: Path to segmentor model (optional)
         fov_path: Path to FOV estimator model (optional)
+        view: View to use for processing (default: left)
         debug_vis: Whether to save debug visualizations
     """
     # Set up SAM 3D Body estimator
@@ -374,13 +411,13 @@ def process_images(
             # Process the image with SAM 3D Body
             use_load_int = True
             if use_load_int:
-                cam_int_tensor = torch.from_numpy(np.array(stereo_data.intrinsic)).to(device)[None, :, :]
+                cam_int_tensor = torch.from_numpy(np.array(stereo_data.get_intrinsic(view))).to(device)[None, :, :]
             else:
                 cam_int_tensor = None
 
             # Convert BGR to RGB
             # left_image_rgb = cv2.cvtColor(stereo_data.left_image, cv2.COLOR_BGR2RGB)
-            left_image_rgb = stereo_data.left_image
+            left_image_rgb = stereo_data.get_image(view)
             outputs = estimator.process_one_image(img=left_image_rgb, cam_int=cam_int_tensor)
             
             # Update buffer
@@ -453,6 +490,7 @@ def process_images(
                     visualizer,
                     output_dir,
                     f"frame_{frame_idx:06d}",
+                    view=view,
                 )
             
         except Exception as e:
@@ -494,7 +532,7 @@ def main():
     parser.add_argument(
         "--data_config", "-c",
         type=str,
-        default="/app/FDCPost/config/config_0001_2_down.yaml",
+        default="/app/FDCPost/config/debug_v5.yaml",
         help="Path to data config file",
     )
     parser.add_argument(
@@ -520,6 +558,13 @@ def main():
         type=str,
         default="/app/FDCPost/data",
         help="Data root directory",
+    )
+    parser.add_argument(
+        "--view",
+        type=str,
+        default="left",
+        choices=["left", "right"],
+        help="View to use for processing (default: left)",
     )
     parser.add_argument(
         "--local_output_dir",
@@ -569,6 +614,7 @@ def main():
         ego_valid_dist=human_recon_config.ego_valid_dist,
         valid_min_conti_frames=human_recon_config.valid_min_conti_frames,
         debug_vis=args.debug_vis,
+        view=args.view,
     )
 
 
